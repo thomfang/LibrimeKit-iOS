@@ -6,9 +6,12 @@ on:
       - 'v*'
   workflow_dispatch:
 
+env:
+  BOOST_LIBS: regex,system,filesystem,thread
+  BOOST_PLATFORMS: ios,iossim-both
+
 jobs:
   build:
-    # Status: STUB — full implementation pending M4.
     runs-on: macos-15
     timeout-minutes: 120
 
@@ -24,17 +27,29 @@ jobs:
           xcode-select -p
           xcodebuild -version
           cmake --version
+          clang --version
 
-      - name: Cache boost-iosx output
+      # boost-iosx ICU + boost stage 是最大耗时 (~25 min cold).
+      # build.sh 自己检查 frameworks.built.platforms / .libs, 若 cache 命中且参数一致就 exit 0.
+      # 我们 cache 整个 boost-iosx 工作目录 (Pods/icu4c-iosx + stage/ + frameworks/ + 源码 tarball).
+      - name: Restore boost-iosx cache
+        id: boost-cache
         uses: actions/cache@v4
         with:
-          path: deps/boost-iosx/frameworks
-          key: boost-iosx-${{ hashFiles('deps/boost-iosx/scripts/build.sh', 'deps/boost-iosx/LOCATIONS') }}
+          path: |
+            deps/boost-iosx/frameworks
+            deps/boost-iosx/scripts/Pods
+            deps/boost-iosx/boost
+            deps/boost-iosx/boost_*.tar.bz2
+            deps/boost-iosx/frameworks.built.libs
+            deps/boost-iosx/frameworks.built.platforms
+          # 任何 build.sh / LOCATIONS / submodule SHA / libs / platforms 变化都失效
+          key: boost-iosx-${{ runner.os }}-${{ hashFiles('deps/boost-iosx/scripts/build.sh', 'deps/boost-iosx/LOCATIONS', '.gitmodules') }}-${{ env.BOOST_LIBS }}-${{ env.BOOST_PLATFORMS }}
 
-      - name: Build boost xcframeworks
-        run: cd deps/boost-iosx && make build
+      - name: Build boost (skipped on cache hit, see frameworks.built.*)
+        run: make boost BOOST_LIBS="$BOOST_LIBS" BOOST_PLATFORMS="$BOOST_PLATFORMS"
 
-      - name: Build small deps
+      - name: Build small deps (glog/leveldb/yaml-cpp/marisa/opencc)
         run: make deps
 
       - name: Build librime
@@ -43,8 +58,28 @@ jobs:
       - name: Pack xcframeworks
         run: make pack
 
+      - name: Verify output
+        run: |
+          ls -lh Frameworks/
+          for fw in Frameworks/*.xcframework; do
+            name=$(basename "$fw")
+            slices=$(ls "$fw" | grep -v Info.plist | tr '\n' ' ')
+            echo "  $name → $slices"
+          done
+
       - name: Create release tarball
-        run: cd Frameworks && tar -czf ../Frameworks.tgz *.xcframework
+        run: |
+          cd Frameworks
+          tar -czf ../Frameworks.tgz *.xcframework
+          cd -
+          ls -lh Frameworks.tgz
+
+      - name: Upload tarball as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Frameworks
+          path: Frameworks.tgz
+          retention-days: 14
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
@@ -52,3 +87,5 @@ jobs:
         with:
           files: Frameworks.tgz
           generate_release_notes: true
+          draft: false
+          prerelease: false
