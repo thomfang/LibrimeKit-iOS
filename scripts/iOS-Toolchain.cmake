@@ -23,20 +23,25 @@ if(NOT DEFINED IOS_PLATFORM)
 endif()
 
 if(IOS_PLATFORM STREQUAL "OS")
-  set(CMAKE_OSX_SYSROOT "iphoneos")
-  set(CMAKE_OSX_ARCHITECTURES "arm64")
+  set(_IOS_SYSROOT "iphoneos")
+  set(_IOS_ARCH    "arm64")
   set(_IOS_SLICE_NAME "ios-arm64")
 elseif(IOS_PLATFORM STREQUAL "SIMULATOR")
-  set(CMAKE_OSX_SYSROOT "iphonesimulator")
-  set(CMAKE_OSX_ARCHITECTURES "x86_64")
+  set(_IOS_SYSROOT "iphonesimulator")
+  set(_IOS_ARCH    "x86_64")
   set(_IOS_SLICE_NAME "ios-x86_64-simulator")
 elseif(IOS_PLATFORM STREQUAL "SIMULATOR_ARM64")
-  set(CMAKE_OSX_SYSROOT "iphonesimulator")
-  set(CMAKE_OSX_ARCHITECTURES "arm64")
+  set(_IOS_SYSROOT "iphonesimulator")
+  set(_IOS_ARCH    "arm64")
   set(_IOS_SLICE_NAME "ios-arm64-simulator")
 else()
   message(FATAL_ERROR "IOS_PLATFORM must be OS, SIMULATOR, or SIMULATOR_ARM64")
 endif()
+
+# CACHE FORCE 是必须的：CMake 4.x 对 toolchain 里普通 set() 的 CMAKE_OSX_ARCHITECTURES
+# 不会传到子项目，导致某些 dep 退回 host arch（M1 上变成 arm64，污染 x86_64 slice）。
+set(CMAKE_OSX_SYSROOT       "${_IOS_SYSROOT}" CACHE STRING "iOS sysroot" FORCE)
+set(CMAKE_OSX_ARCHITECTURES "${_IOS_ARCH}"    CACHE STRING "iOS arch"    FORCE)
 
 message(STATUS "iOS toolchain: ${IOS_PLATFORM} (${_IOS_SLICE_NAME})")
 
