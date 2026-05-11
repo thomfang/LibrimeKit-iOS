@@ -29,6 +29,15 @@ jobs:
           cmake --version
           clang --version
 
+      # Compute cache key: actions/cache rejects commas. Replace them with dashes
+      # so BOOST_LIBS=regex,system,... becomes a valid key fragment.
+      - name: Compute cache key
+        id: cache-key
+        run: |
+          libs_safe=$(echo "$BOOST_LIBS"       | tr ',' '-')
+          plats_safe=$(echo "$BOOST_PLATFORMS" | tr ',' '-')
+          echo "key=boost-iosx-${{ runner.os }}-${{ hashFiles('deps/boost-iosx/scripts/build.sh', 'deps/boost-iosx/LOCATIONS', '.gitmodules') }}-${libs_safe}-${plats_safe}" >> "$GITHUB_OUTPUT"
+
       # boost-iosx ICU + boost stage 是最大耗时 (~25 min cold).
       # build.sh 自己检查 frameworks.built.platforms / .libs, 若 cache 命中且参数一致就 exit 0.
       # 我们 cache 整个 boost-iosx 工作目录 (Pods/icu4c-iosx + stage/ + frameworks/ + 源码 tarball).
@@ -43,8 +52,7 @@ jobs:
             deps/boost-iosx/boost_*.tar.bz2
             deps/boost-iosx/frameworks.built.libs
             deps/boost-iosx/frameworks.built.platforms
-          # 任何 build.sh / LOCATIONS / submodule SHA / libs / platforms 变化都失效
-          key: boost-iosx-${{ runner.os }}-${{ hashFiles('deps/boost-iosx/scripts/build.sh', 'deps/boost-iosx/LOCATIONS', '.gitmodules') }}-${{ env.BOOST_LIBS }}-${{ env.BOOST_PLATFORMS }}
+          key: ${{ steps.cache-key.outputs.key }}
 
       - name: Build boost (skipped on cache hit, see frameworks.built.*)
         run: make boost BOOST_LIBS="$BOOST_LIBS" BOOST_PLATFORMS="$BOOST_PLATFORMS"
