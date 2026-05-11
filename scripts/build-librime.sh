@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Build librime 1.16.1 cross-compiled to iOS slices.
 #
-# Status: STUB — implementation in progress (M1.7).
+# Status: M1.7 — implemented for the 3 iOS slices.
 #
 # Inputs:
 #   - $ROOT/build/install/<slice>/{lib,include}  produced by build-deps.sh
-#   - $ROOT/deps/boost-iosx/frameworks/*.xcframework  produced by boost-iosx
+#       glog, leveldb, marisa, opencc, yaml-cpp
+#   - $ROOT/build/install/<slice>/{lib/libboost_*.a, include/boost/}
+#       extracted from $ROOT/deps/boost-iosx/frameworks/ by extract-boost.sh
 #
 # Output:
-#   - $ROOT/build/install/<slice>/lib/librime.a (static)
-#   - $ROOT/build/install/<slice>/include/rime_api.h
+#   - $ROOT/build/install/<slice>/lib/librime.a
+#   - $ROOT/build/install/<slice>/include/rime_api.h, rime/*.h
 
 set -euo pipefail
 
@@ -18,53 +20,75 @@ LIBRIME_DIR="$ROOT/deps/librime"
 BUILD_DIR="$ROOT/build"
 TOOLCHAIN="$ROOT/scripts/iOS-Toolchain.cmake"
 
-SLICES=("OS" "SIMULATOR_ARM64" "SIMULATOR")
+ALL_SLICES=("ios-arm64" "ios-arm64-simulator" "ios-x86_64-simulator")
+
+slice_to_platform() {
+  case "$1" in
+    ios-arm64)              echo "OS" ;;
+    ios-arm64-simulator)    echo "SIMULATOR_ARM64" ;;
+    ios-x86_64-simulator)   echo "SIMULATOR" ;;
+    *) echo "ERR_UNKNOWN_SLICE_$1"; return 1 ;;
+  esac
+}
 
 build_librime_for_slice() {
-  local platform="$1"
-  local slice="$2"
+  local slice="$1" platform; platform=$(slice_to_platform "$slice")
   local build="$BUILD_DIR/$slice/librime"
   local prefix="$BUILD_DIR/install/$slice"
 
-  echo "=== building librime for $slice ==="
-  # TODO(M1.7):
-  # 1) Boost: extract per-slice headers + .a from boost-iosx xcframeworks
-  #    or wrap with imported targets; set Boost_DIR.
-  # 2) Glog: prefix has glog from build-deps.sh.
-  # 3) librime CMake flags (iOS-friendly):
-  #    -DBUILD_SHARED_LIBS=OFF
-  #    -DBUILD_STATIC=ON
-  #    -DBUILD_TEST=OFF
-  #    -DBUILD_SAMPLE=OFF
-  #    -DBUILD_DATA=OFF
-  #    -DINSTALL_PRIVATE_HEADERS=OFF
-  #    -DBUILD_MERGED_PLUGINS=ON
-  #    -DENABLE_LOGGING=ON
-  #    -DENABLE_THREADING=ON
-  #
-  # cmake -S "$LIBRIME_DIR" -B "$build" \
-  #       -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \
-  #       -DIOS_PLATFORM="$platform" \
-  #       -DCMAKE_PREFIX_PATH="$prefix" \
-  #       -DCMAKE_INSTALL_PREFIX="$prefix" \
-  #       -DBoost_USE_STATIC_LIBS=ON \
-  #       <librime iOS flags above>
-  # cmake --build "$build" --target install --config Release
+  # 前置：deps 必须先编好
+  for lib in glog leveldb marisa opencc yaml-cpp; do
+    if [ ! -f "$prefix/lib/lib${lib}.a" ]; then
+      echo "ERROR: missing $prefix/lib/lib${lib}.a — run scripts/build-deps.sh first" >&2
+      return 1
+    fi
+  done
+  if [ ! -f "$prefix/lib/libboost_regex.a" ]; then
+    echo "ERROR: missing $prefix/lib/libboost_regex.a — run scripts/extract-boost.sh first" >&2
+    return 1
+  fi
+
+  echo "=== librime → $slice ==="
+  rm -rf "$build"
+  # librime 自带 Find*.cmake 走 find_path/find_library，会搜 CMAKE_PREFIX_PATH 下的
+  # include/ 和 lib/。CMAKE_FIND_ROOT_PATH 也要加上以满足 toolchain 的 ROOT_PATH_MODE=ONLY。
+  # Boost 用手工 set 跳过系统 FindBoost（boost-iosx 不装 BoostConfig.cmake）。
+  cmake -S "$LIBRIME_DIR" -B "$build" -G "Unix Makefiles" \
+    -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \
+    -DIOS_PLATFORM="$platform" \
+    -DCMAKE_INSTALL_PREFIX="$prefix" \
+    -DCMAKE_PREFIX_PATH="$prefix" \
+    -DCMAKE_FIND_ROOT_PATH="$prefix;$(xcrun --sdk "$([ "$slice" = "ios-arm64" ] && echo iphoneos || echo iphonesimulator)" --show-sdk-path)" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DBUILD_STATIC=ON \
+    -DBUILD_TEST=OFF \
+    -DBUILD_SAMPLE=OFF \
+    -DBUILD_DATA=OFF \
+    -DBUILD_SEPARATE_LIBS=OFF \
+    -DBUILD_MERGED_PLUGINS=ON \
+    -DINSTALL_PRIVATE_HEADERS=OFF \
+    -DENABLE_EXTERNAL_PLUGINS=OFF \
+    -DENABLE_LOGGING=ON \
+    -DENABLE_THREADING=ON \
+    -DENABLE_TIMESTAMP=OFF \
+    -DBoost_NO_BOOST_CMAKE=ON \
+    -DBoost_INCLUDE_DIR="$prefix/include" \
+    -DBoost_LIBRARY_DIR="$prefix/lib" \
+    -DBoost_USE_STATIC_LIBS=ON \
+    -DBoost_FOUND=TRUE \
+    -DBoost_INCLUDE_DIRS="$prefix/include" \
+    -DBoost_LIBRARIES="$prefix/lib/libboost_regex.a;$prefix/lib/libboost_system.a;$prefix/lib/libboost_filesystem.a;$prefix/lib/libboost_thread.a"
+  cmake --build "$build" --target install --parallel
 }
 
 main() {
-  for platform in "${SLICES[@]}"; do
-    case "$platform" in
-      OS)              slice="ios-arm64" ;;
-      SIMULATOR_ARM64) slice="ios-arm64-simulator" ;;
-      SIMULATOR)       slice="ios-x86_64-simulator" ;;
-    esac
-    build_librime_for_slice "$platform" "$slice"
+  local slices=("${ALL_SLICES[@]}")
+  if [ $# -ge 1 ]; then slices=("$1"); fi
+  for slice in "${slices[@]}"; do
+    build_librime_for_slice "$slice"
   done
-  echo "==="
-  echo "build-librime.sh STUB — no librime.a produced yet. Implementation pending M1.7."
-  echo "==="
-  exit 1
+  echo "=== done ==="
 }
 
 main "$@"
