@@ -1,0 +1,54 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    # Status: STUB — full implementation pending M4.
+    runs-on: macos-15
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Show toolchain
+        run: |
+          xcode-select -p
+          xcodebuild -version
+          cmake --version
+
+      - name: Cache boost-iosx output
+        uses: actions/cache@v4
+        with:
+          path: deps/boost-iosx/frameworks
+          key: boost-iosx-${{ hashFiles('deps/boost-iosx/scripts/build.sh', 'deps/boost-iosx/LOCATIONS') }}
+
+      - name: Build boost xcframeworks
+        run: cd deps/boost-iosx && make build
+
+      - name: Build small deps
+        run: make deps
+
+      - name: Build librime
+        run: make librime
+
+      - name: Pack xcframeworks
+        run: make pack
+
+      - name: Create release tarball
+        run: cd Frameworks && tar -czf ../Frameworks.tgz *.xcframework
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Frameworks.tgz
+          generate_release_notes: true

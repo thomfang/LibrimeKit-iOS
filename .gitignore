@@ -1,0 +1,26 @@
+# Build outputs
+/build/
+/Frameworks/
+*.tgz
+*.tar.xz
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# Boost-iosx side effects
+/boost-iosx/boost/
+/boost-iosx/frameworks/
+/boost-iosx/frameworks.built.*/
+
+# Logs
+*.log

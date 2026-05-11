@@ -1,0 +1,7 @@
+[submodule "deps/librime"]
+	path = deps/librime
+	url = https://github.com/thomfang/librime.git
+	branch = master
+[submodule "deps/boost-iosx"]
+	path = deps/boost-iosx
+	url = https://github.com/imfuxiao/boost-iosx.git
