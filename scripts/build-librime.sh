@@ -22,6 +22,52 @@ TOOLCHAIN="$ROOT/scripts/iOS-Toolchain.cmake"
 
 ALL_SLICES=("ios-arm64" "ios-arm64-simulator" "ios-x86_64-simulator")
 
+# librime-lua plugin: clone master 到 plugins/lua/，跑 action-install.sh 把 stock Lua 5.4
+# 源码（thirdparty 分支 mirror）拉到 plugins/lua/thirdparty/。librime CMake `add_subdirectory(plugins)`
+# 会自动发现，加上 BUILD_MERGED_PLUGINS=ON（已设）→ rime-lua-objs 合并进 librime.a。
+ensure_lua_plugin() {
+  local plugin_dir="$LIBRIME_DIR/plugins/lua"
+  if [ ! -d "$plugin_dir/.git" ]; then
+    echo "=== cloning librime-lua master → $plugin_dir ==="
+    rm -rf "$plugin_dir"
+    git clone --depth 1 https://github.com/hchunhui/librime-lua.git "$plugin_dir"
+  fi
+  if [ ! -f "$plugin_dir/thirdparty/lua5.4/lua.h" ]; then
+    echo "=== running plugins/lua/action-install.sh (downloads stock Lua source) ==="
+    (cd "$plugin_dir" && bash action-install.sh)
+  fi
+  # iOS SDK 把 system() 标 unavailable，stock Lua 5.4 loslib.c 编不过。luaconf.h 提供
+  # LUA_USE_IOS 宏走 iOS 退化路径（system 返回 -1，os.execute(nil) 返回 false）。
+  # 在 plugin CMakeLists.txt 追加一行，确保 LUA_SRC + rime-lua-objs 都拿到这个 define。
+  local marker="# LibrimeKit-iOS: LUA_USE_IOS"
+  if ! grep -qF "$marker" "$plugin_dir/CMakeLists.txt"; then
+    cat >> "$plugin_dir/CMakeLists.txt" <<EOF
+
+$marker
+target_compile_definitions(rime-lua-objs PRIVATE LUA_USE_IOS)
+EOF
+  fi
+  # librime 静态库下 rime_declare_module_dependencies() 硬编码只 require core/dict/gears/levers，
+  # lua plugin 的 __attribute__((constructor)) 在静态库里没人 reference 会被 linker dead-strip。
+  # 把 require_module_lua() 加进 dependency 链，强制 lua module 被 link 进 librime.a。
+  local rime_api="$LIBRIME_DIR/src/rime_api.cc"
+  local api_marker="// LibrimeKit-iOS: force-link lua"
+  if [ -f "$rime_api" ] && ! grep -qF "$api_marker" "$rime_api"; then
+    # 匹配函数体内的 `  rime_require_module_levers();`（行首 2 空格、无 extern），
+    # 在它后面追加 lua call。注意必须用锚定模式区别于 file-scope `extern void ...();`。
+    awk -v marker="$api_marker" '
+      /^  rime_require_module_levers\(\);[[:space:]]*$/ {
+        print
+        print "  " marker
+        print "  extern void rime_require_module_lua();"
+        print "  rime_require_module_lua();"
+        next
+      }
+      { print }
+    ' "$rime_api" > "$rime_api.tmp" && mv "$rime_api.tmp" "$rime_api"
+  fi
+}
+
 slice_to_platform() {
   case "$1" in
     ios-arm64)              echo "OS" ;;
@@ -83,6 +129,7 @@ build_librime_for_slice() {
 }
 
 main() {
+  ensure_lua_plugin
   local slices=("${ALL_SLICES[@]}")
   if [ $# -ge 1 ]; then slices=("$1"); fi
   for slice in "${slices[@]}"; do
