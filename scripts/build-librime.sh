@@ -125,7 +125,10 @@ build_librime_for_slice() {
     -DBoost_FOUND=TRUE \
     -DBoost_INCLUDE_DIRS="$prefix/include" \
     -DBoost_LIBRARIES="$prefix/lib/libboost_regex.a;$prefix/lib/libboost_system.a;$prefix/lib/libboost_filesystem.a;$prefix/lib/libboost_thread.a"
-  cmake --build "$build" --target install --parallel
+  # macos-15 runner (4 vCPU / ~7 GB) 跑 lua template + librime gear 实例化时
+  # 全并发 cc1plus 会 swap thrash 近死锁（多次观察到 99% 卡死）。默认限 2，本地强机
+  # 可以 PARALLEL_JOBS=8 bash scripts/build-librime.sh 覆盖。
+  cmake --build "$build" --target install --parallel "${PARALLEL_JOBS:-2}"
 }
 
 main() {
