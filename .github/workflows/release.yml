@@ -6,6 +6,11 @@ on:
       - 'v*'
   workflow_dispatch:
 
+# action-gh-release 用 GITHUB_TOKEN 调 GitHub Release API；2023 起默认 token
+# 只读，必须显式声明 contents:write 才能 publish release。
+permissions:
+  contents: write
+
 env:
   BOOST_LIBS: regex,system,filesystem,thread
   BOOST_PLATFORMS: ios,iossim-both
